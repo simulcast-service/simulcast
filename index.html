@@ -267,9 +267,7 @@
       white-space: nowrap;
       min-width: 380px;
     }
-    #video-wrapper:hover #controls-wrap {
-      transform: translateX(-50%) translateY(0);
-    }
+
 
     .controls-row {
       display: flex; align-items: center; gap: 6px;
@@ -803,6 +801,32 @@ function applyVolFromEvent(e) {
 // Init volume thumb at 100%
 volFill.style.width  = '100%';
 volThumb.style.left  = '100%';
+
+/* ══ CONTROLS SHOW/HIDE ════════════════════════════════════════════════════ */
+const controlsWrap  = document.getElementById('controls-wrap');
+const videoWrapper  = document.getElementById('video-wrapper');
+let hideTimer;
+
+function showControls() {
+  controlsWrap.style.transform = 'translateX(-50%) translateY(0)';
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(hideControls, 2000);
+}
+
+function hideControls() {
+  controlsWrap.style.transform = 'translateX(-50%) translateY(calc(100% + 4px))';
+}
+
+videoWrapper.addEventListener('mousemove', showControls);
+videoWrapper.addEventListener('mouseleave', () => {
+  clearTimeout(hideTimer);
+  hideControls();
+});
+// Keep visible while hovering the controls themselves
+controlsWrap.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+controlsWrap.addEventListener('mouseleave', () => {
+  hideTimer = setTimeout(hideControls, 2000);
+});
 
 /* ══ UI HELPERS ════════════════════════════════════════════════════════════ */
 function fmtTime(s) {
