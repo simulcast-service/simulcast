@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SimulCast</title>
+  <style>
+    /* ── RESET & BASE ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gray:    #c0c0c0;
+      --light:   #ffffff;
+      --dark:    #808080;
+      --darker:  #404040;
+      --navy:    #000080;
+      --teal:    #008080;
+      --black:   #000000;
+      --yellow:  #ffff00;
+      --green:   #00aa00;
+      --orange:  #ff8800;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: var(--teal);
+      /* Win95 system font stack */
+      font-family: "MS Sans Serif", "Microsoft Sans Serif", "Tahoma", Arial, sans-serif;
+      font-size: 11px;
+      color: var(--black);
+      cursor: default;
+      user-select: none;
+    }
+
+    /* ── WIN95 BEVEL HELPERS ──────────────────────────────────────────── */
+    .bevel-out {
+      border-top:    2px solid var(--light);
+      border-left:   2px solid var(--light);
+      border-bottom: 2px solid var(--darker);
+      border-right:  2px solid var(--darker);
+      box-shadow: inset -1px -1px 0 var(--dark), inset 1px 1px 0 var(--gray);
+    }
+    .bevel-in {
+      border-top:    2px solid var(--darker);
+      border-left:   2px solid var(--darker);
+      border-bottom: 2px solid var(--light);
+      border-right:  2px solid var(--light);
+      box-shadow: inset 1px 1px 0 var(--dark);
+    }
+
+    /* ── SPLASH SCREEN ────────────────────────────────────────────────── */
+    #splash {
+      position: fixed; inset: 0;
+      background: var(--black);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 999;
+      cursor: pointer;
+      transition: opacity 0.5s ease;
+    }
+    #splash img {
+      max-width: 90vw; max-height: 90vh;
+      object-fit: contain;
+      image-rendering: pixelated;
+    }
+    #splash-hint {
+      position: absolute; bottom: 24px;
+      left: 50%; transform: translateX(-50%);
+      color: var(--gray);
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      animation: blink 1.2s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── ROOM DIALOG ──────────────────────────────────────────────────── */
+    #room-overlay {
+      position: fixed; inset: 0;
+      background: var(--teal);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 900;
+    }
+    .win-dialog {
+      background: var(--gray);
+      border-top:    2px solid var(--light);
+      border-left:   2px solid var(--light);
+      border-bottom: 2px solid var(--darker);
+      border-right:  2px solid var(--darker);
+      width: 320px;
+    }
+    .win-dialog-title {
+      background: linear-gradient(to right, var(--navy) 0%, #1084d0 100%);
+      color: var(--light);
+      font-weight: bold;
+      font-size: 11px;
+      padding: 3px 4px 3px 6px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .win-dialog-title-left {
+      display: flex; align-items: center; gap: 5px;
+    }
+    .win-dialog-title img.title-icon {
+      width: 16px; height: 16px;
+    }
+    .win-dialog-body {
+      padding: 14px 12px 10px 12px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .win-dialog-body label { font-size: 11px; }
+    .win-input {
+      background: var(--light);
+      border-top:    1px solid var(--darker);
+      border-left:   1px solid var(--darker);
+      border-bottom: 1px solid var(--light);
+      border-right:  1px solid var(--light);
+      box-shadow: inset 1px 1px 0 var(--dark);
+      padding: 2px 4px;
+      font-family: "MS Sans Serif", "Microsoft Sans Serif", Arial, sans-serif;
+      font-size: 11px;
+      width: 100%;
+      cursor: text;
+      user-select: text;
+      outline: none;
+    }
+    .win-input:focus { outline: 1px dotted var(--black); outline-offset: -2px; }
+    .dialog-note {
+      font-size: 10px; color: var(--dark);
+      border-top: 1px solid var(--dark);
+      border-left: 1px solid var(--dark);
+      border-bottom: 1px solid var(--light);
+      border-right: 1px solid var(--light);
+      padding: 4px 6px;
+      background: var(--gray);
+      line-height: 1.5;
+    }
+    .dialog-buttons {
+      display: flex; gap: 6px; justify-content: flex-end;
+      padding-top: 2px;
+    }
+    .win-btn {
+      background: var(--gray);
+      border-top:    2px solid var(--light);
+      border-left:   2px solid var(--light);
+      border-bottom: 2px solid var(--darker);
+      border-right:  2px solid var(--darker);
+      box-shadow: inset -1px -1px 0 var(--dark), inset 1px 1px 0 var(--gray);
+      font-family: "MS Sans Serif", "Microsoft Sans Serif", Arial, sans-serif;
+      font-size: 11px;
+      color: var(--black);
+      padding: 3px 12px;
+      cursor: pointer;
+      min-width: 60px;
+    }
+    .win-btn:active, .win-btn.pressed {
+      border-top:    2px solid var(--darker);
+      border-left:   2px solid var(--darker);
+      border-bottom: 2px solid var(--light);
+      border-right:  2px solid var(--light);
+      box-shadow: inset 1px 1px 0 var(--dark);
+      padding: 4px 11px 2px 13px;
+    }
+
+    /* ── MAIN WINDOW ──────────────────────────────────────────────────── */
+    #main-window {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      background: var(--gray);
+      border-top:    2px solid var(--light);
+      border-left:   2px solid var(--light);
+      border-bottom: 2px solid var(--darker);
+      border-right:  2px solid var(--darker);
+    }
+
+    /* Title Bar */
+    #title-bar {
+      background: linear-gradient(to right, var(--navy) 0%, #1084d0 100%);
+      color: var(--light);
+      padding: 2px 4px 2px 6px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+      gap: 4px;
+    }
+    #title-bar-left {
+      display: flex; align-items: center; gap: 5px;
+      font-weight: bold; font-size: 11px;
+      flex: 1;
+    }
+    #title-bar-left img {
+      width: 16px; height: 16px;
+      image-rendering: pixelated;
+    }
+    .titlebar-btn {
+      background: var(--gray);
+      border-top:    1px solid var(--light);
+      border-left:   1px solid var(--light);
+      border-bottom: 1px solid var(--darker);
+      border-right:  1px solid var(--darker);
+      width: 16px; height: 14px;
+      font-size: 9px; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: var(--black);
+      padding: 0;
+    }
+    .titlebar-btn:active {
+      border-top:    1px solid var(--darker);
+      border-left:   1px solid var(--darker);
+      border-bottom: 1px solid var(--light);
+      border-right:  1px solid var(--light);
+    }
+
+    /* Menu Bar */
+    #menu-bar {
+      background: var(--gray);
+      padding: 2px 4px;
+      display: flex; gap: 0;
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--dark);
+    }
+    .menu-item {
+      padding: 2px 6px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .menu-item:hover {
+      background: var(--navy);
+      color: var(--light);
+    }
+
+    /* Video Area */
+    #video-wrapper {
+      flex: 1;
+      background: var(--black);
+      position: relative;
+      overflow: hidden;
+      /* inset border */
+      border-top:    2px solid var(--darker);
+      border-left:   2px solid var(--darker);
+      border-bottom: 2px solid var(--light);
+      border-right:  2px solid var(--light);
+      margin: 3px;
+    }
+
+    #video {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    /* ── CONTROLS OVERLAY ─────────────────────────────────────────────── */
+    #controls-wrap {
+      position: absolute;
+      bottom: 0; left: 50%;
+      transform: translateX(-50%) translateY(calc(100% + 4px));
+      transition: transform 0.25s ease;
+      /* Win95 floating panel */
+      background: var(--gray);
+      border-top:    2px solid var(--light);
+      border-left:   2px solid var(--light);
+      border-right:  2px solid var(--darker);
+      border-bottom: 2px solid var(--darker);
+      box-shadow: 2px 2px 0 var(--black);
+      padding: 5px 10px;
+      display: flex; flex-direction: column; align-items: center;
+      gap: 5px;
+      z-index: 10;
+      white-space: nowrap;
+      min-width: 380px;
+    }
+    #video-wrapper:hover #controls-wrap {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .controls-row {
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    /* Seek bar styled Win95 */
+    #seek-wrap {
+      flex: 1;
+      position: relative;
+      height: 20px;
+      display: flex; align-items: center;
+      min-width: 200px;
+    }
+    #seek-track {
+      width: 100%; height: 4px;
+      background: var(--darker);
+      border-top: 1px solid var(--black);
+      border-left: 1px solid var(--black);
+      border-bottom: 1px solid var(--light);
+      border-right: 1px solid var(--light);
+      position: relative; cursor: pointer;
+    }
+    #seek-fill {
+      height: 100%;
+      background: var(--navy);
+      pointer-events: none;
+      width: 0%;
+    }
+    #seek-thumb {
+      position: absolute;
+      top: 50%; left: 0%;
+      transform: translate(-50%, -50%);
+      width: 11px; height: 20px;
+      background: var(--gray);
+      border-top:    1px solid var(--light);
+      border-left:   1px solid var(--light);
+      border-bottom: 1px solid var(--darker);
+      border-right:  1px solid var(--darker);
+      cursor: pointer;
+    }
+
+    #time-display {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 11px;
+      background: var(--black);
+      color: var(--green);
+      padding: 2px 6px;
+      border-top:    1px solid var(--darker);
+      border-left:   1px solid var(--darker);
+      border-bottom: 1px solid var(--light);
+      border-right:  1px solid var(--light);
+      min-width: 100px;
+      text-align: center;
+      letter-spacing: 0.05em;
+    }
+
+    .ctrl-icon-btn {
+      background: var(--gray);
+      border-top:    2px solid var(--light);
+      border-left:   2px solid var(--light);
+      border-bottom: 2px solid var(--darker);
+      border-right:  2px solid var(--darker);
+      box-shadow: inset -1px -1px 0 var(--dark), inset 1px 1px 0 var(--gray);
+      width: 32px; height: 26px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; font-size: 13px;
+      flex-shrink: 0;
+    }
+    .ctrl-icon-btn:active {
+      border-top:    2px solid var(--darker);
+      border-left:   2px solid var(--darker);
+      border-bottom: 2px solid var(--light);
+      border-right:  2px solid var(--light);
+      box-shadow: inset 1px 1px 0 var(--dark);
+      padding: 1px 0 0 1px;
+    }
+
+    /* Volume row */
+    #vol-wrap { display: flex; align-items: center; gap: 4px; }
+    #vol-label { font-size: 10px; }
+    #vol-track {
+      width: 70px; height: 4px;
+      background: var(--darker);
+      border-top: 1px solid var(--black);
+      border-left: 1px solid var(--black);
+      border-bottom: 1px solid var(--light);
+      border-right: 1px solid var(--light);
+      position: relative; cursor: pointer;
+    }
+    #vol-fill { height: 100%; background: var(--navy); width: 100%; pointer-events: none; }
+    #vol-thumb {
+      position: absolute; top: 50%; left: 100%;
+      transform: translate(-50%, -50%);
+      width: 8px; height: 16px;
+      background: var(--gray);
+      border-top:    1px solid var(--light);
+      border-left:   1px solid var(--light);
+      border-bottom: 1px solid var(--darker);
+      border-right:  1px solid var(--darker);
+      cursor: pointer;
+    }
+
+    /* ── STATUS BAR ───────────────────────────────────────────────────── */
+    #status-bar {
+      background: var(--gray);
+      border-top: 1px solid var(--darker);
+      display: flex; align-items: center; gap: 2px;
+      padding: 2px 4px;
+      flex-shrink: 0;
+      height: 21px;
+    }
+    .status-cell {
+      border-top:    1px solid var(--dark);
+      border-left:   1px solid var(--dark);
+      border-bottom: 1px solid var(--light);
+      border-right:  1px solid var(--light);
+      padding: 1px 6px;
+      font-size: 11px;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .status-cell:first-child { flex: 1; }
+    #sync-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--dark);
+      flex-shrink: 0;
+    }
+
+    /* ── SYNC FLASH ────────────────────────────────────────────────────── */
+    #sync-flash {
+      position: absolute; inset: 0;
+      background: rgba(255,255,255,0.15);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 5;
+    }
+    #sync-flash.active { opacity: 1; }
+
+    /* ── ROOM TAG IN TITLEBAR ─────────────────────────────────────────── */
+    #title-room-tag {
+      font-size: 10px;
+      font-weight: normal;
+      opacity: 0.8;
+    }
+
+    /* ── SCROLLING DITHERED BG PATTERN ───────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg width='2' height='2' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='1' height='1' fill='%23008080'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%23008080'/%3E%3Crect x='1' y='0' width='1' height='1' fill='%23007070'/%3E%3Crect x='0' y='1' width='1' height='1' fill='%23007070'/%3E%3C/svg%3E");
+      pointer-events: none; z-index: -1;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══ SPLASH ══════════════════════════════════════════════════════════════ -->
+<div id="splash">
+  <img src="splash.png" alt="Splash Screen"
+       onerror="this.style.display='none'; document.getElementById('splash-fallback').style.display='block'">
+  <div id="splash-fallback" style="display:none; text-align:center; color:#00ff00; font-family:'Courier New',monospace;">
+    <div style="font-size:48px; margin-bottom:16px;">📼</div>
+    <div style="font-size:24px; letter-spacing:0.2em;">SIMULCAST</div>
+    <div style="font-size:11px; margin-top:8px; color:#008080;">Video Synchronization System</div>
+  </div>
+  <div id="splash-hint">Click anywhere to continue...</div>
+</div>
+
+<!-- ══ ROOM DIALOG ══════════════════════════════════════════════════════════ -->
+<div id="room-overlay">
+  <div class="win-dialog">
+    <div class="win-dialog-title">
+      <div class="win-dialog-title-left">
+        <img src="logo.png" class="title-icon" alt=""
+             onerror="this.style.display='none'">
+        <span>SimulCast — Connect to Room</span>
+      </div>
+      <button class="titlebar-btn">✕</button>
+    </div>
+    <div class="win-dialog-body">
+      <label for="room-input">Enter a <b>Room ID</b> to sync with another viewer:</label>
+      <input type="text" id="room-input" class="win-input"
+             placeholder="e.g. movie-night, room42" autocomplete="off" spellcheck="false">
+      <div class="dialog-note">
+        💡 Share this same Room ID with the other person.<br>
+        Tip: the URL hash updates automatically — just share the link!
+      </div>
+      <div class="dialog-buttons">
+        <button class="win-btn" id="join-btn">OK</button>
+        <button class="win-btn" id="solo-btn">Solo (No Sync)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MAIN WINDOW ═══════════════════════════════════════════════════════════ -->
+<div id="main-window">
+
+  <!-- Title Bar -->
+  <div id="title-bar">
+    <div id="title-bar-left">
+      <img src="logo.png" alt="" onerror="this.style.display='none'">
+      <span>SimulCast</span>
+      <span id="title-room-tag"></span>
+    </div>
+    <div style="display:flex;gap:2px;flex-shrink:0;">
+      <button class="titlebar-btn" title="Minimize">_</button>
+      <button class="titlebar-btn" title="Restore">▭</button>
+      <button class="titlebar-btn" title="Close"
+              style="font-weight:bold;" onclick="window.close()">✕</button>
+    </div>
+  </div>
+
+  <!-- Menu Bar -->
+  <div id="menu-bar">
+    <span class="menu-item">File</span>
+    <span class="menu-item">View</span>
+    <span class="menu-item" id="menu-change-room">Room</span>
+    <span class="menu-item">Help</span>
+  </div>
+
+  <!-- Video Area -->
+  <div id="video-wrapper">
+    <video id="video" src="video.mp4" preload="metadata"></video>
+    <div id="sync-flash"></div>
+
+    <!-- Controls (slide up on hover) -->
+    <div id="controls-wrap">
+      <!-- Seek row -->
+      <div class="controls-row" style="width:100%;">
+        <div id="seek-wrap" style="flex:1;">
+          <div id="seek-track">
+            <div id="seek-fill"></div>
+            <div id="seek-thumb"></div>
+          </div>
+        </div>
+      </div>
+      <!-- Buttons + Time row -->
+      <div class="controls-row">
+        <button class="ctrl-icon-btn" id="play-pause-btn" title="Play / Pause">▶</button>
+        <button class="ctrl-icon-btn" id="stop-btn" title="Stop">■</button>
+        <div id="time-display">0:00 / 0:00</div>
+        <div id="vol-wrap">
+          <span id="vol-label">🔊</span>
+          <div id="vol-track">
+            <div id="vol-fill"></div>
+            <div id="vol-thumb"></div>
+          </div>
+        </div>
+        <button class="ctrl-icon-btn" id="fullscreen-btn" title="Fullscreen">⛶</button>
+      </div>
+    </div>
+  </div><!-- /video-wrapper -->
+
+  <!-- Status Bar -->
+  <div id="status-bar">
+    <div class="status-cell" id="status-room">Room: —</div>
+    <div class="status-cell">
+      <span id="sync-dot"></span>
+      <span id="status-conn">Offline</span>
+    </div>
+    <div class="status-cell" id="status-peers">Peers: 0</div>
+  </div>
+
+</div><!-- /main-window -->
+
+<!-- ══ GUN.JS — Zero-config P2P sync ════════════════════════════════════════
+     Gun.js uses free public relay servers. No backend needed.
+     If relays are unreliable, see README for Firebase fallback.
+═══════════════════════════════════════════════════════════════════════════════ -->
+<script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1240/gun.js"></script>
+
+<script>
+'use strict';
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CONFIG — edit these if you want different relay servers
+   Free Gun.js relays (no account needed). Community-hosted, best-effort.
+   For production reliability, self-host: https://github.com/amark/gun
+══════════════════════════════════════════════════════════════════════════ */
+const GUN_PEERS = [
+  'https://gun-manhattan.herokuapp.com/gun',
+  'https://gun-us.herokuapp.com/gun',
+  'https://peer.wallie.io/gun',
+];
+const NAMESPACE = 'simulcast'; // Change this if you want private rooms
+
+/* ══ DOM REFS ══════════════════════════════════════════════════════════════ */
+const splash         = document.getElementById('splash');
+const splashHint     = document.getElementById('splash-hint');
+const roomOverlay    = document.getElementById('room-overlay');
+const roomInput      = document.getElementById('room-input');
+const joinBtn        = document.getElementById('join-btn');
+const soloBtn        = document.getElementById('solo-btn');
+const video          = document.getElementById('video');
+const playPauseBtn   = document.getElementById('play-pause-btn');
+const stopBtn        = document.getElementById('stop-btn');
+const seekTrack      = document.getElementById('seek-track');
+const seekFill       = document.getElementById('seek-fill');
+const seekThumb      = document.getElementById('seek-thumb');
+const volTrack       = document.getElementById('vol-track');
+const volFill        = document.getElementById('vol-fill');
+const volThumb       = document.getElementById('vol-thumb');
+const timeDisplay    = document.getElementById('time-display');
+const fullscreenBtn  = document.getElementById('fullscreen-btn');
+const statusRoom     = document.getElementById('status-room');
+const statusConn     = document.getElementById('status-conn');
+const statusPeers    = document.getElementById('status-peers');
+const syncDot        = document.getElementById('sync-dot');
+const syncFlash      = document.getElementById('sync-flash');
+const titleRoomTag   = document.getElementById('title-room-tag');
+const menuChangeRoom = document.getElementById('menu-change-room');
+
+/* ══ STATE ═════════════════════════════════════════════════════════════════ */
+const myId = Math.random().toString(36).slice(2, 10); // unique session ID
+let gun, roomNode;
+let isSyncing   = false;  // true while applying a remote event (blocks re-broadcast)
+let seekDragging = false;
+let volDragging  = false;
+let peerCount    = 0;
+let connTimeout;
+
+/* ══ SPLASH ════════════════════════════════════════════════════════════════ */
+splash.addEventListener('click', () => {
+  // First user gesture — safe to play audio now
+  tryPlayStartSound();
+  splash.style.opacity = '0';
+  splash.style.pointerEvents = 'none';
+  setTimeout(() => {
+    splash.style.display = 'none';
+    showRoomDialog();
+  }, 500);
+});
+
+function tryPlayStartSound() {
+  const snd = new Audio('start.wav');
+  snd.volume = 0.7;
+  snd.play().catch(() => {}); // silently skip if missing or blocked
+}
+
+/* ══ ROOM DIALOG ═══════════════════════════════════════════════════════════ */
+function showRoomDialog() {
+  roomOverlay.style.display = 'flex';
+  // Pre-fill from URL hash
+  const hash = location.hash.slice(1);
+  if (hash) roomInput.value = decodeURIComponent(hash);
+  setTimeout(() => roomInput.focus(), 50);
+}
+
+joinBtn.addEventListener('click', () => {
+  const id = roomInput.value.trim().replace(/\s+/g, '-') || 'default-room';
+  roomOverlay.style.display = 'none';
+  initRoom(id);
+});
+soloBtn.addEventListener('click', () => {
+  roomOverlay.style.display = 'none';
+  setStatus('Solo', 'solo');
+  statusRoom.textContent = 'Room: Solo Mode';
+  titleRoomTag.textContent = '';
+});
+roomInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') joinBtn.click();
+});
+menuChangeRoom.addEventListener('click', showRoomDialog);
+
+/* ══ ROOM / GUN INIT ═══════════════════════════════════════════════════════ */
+function initRoom(roomId) {
+  // Update URL hash so both viewers can share the link
+  location.hash = encodeURIComponent(roomId);
+  statusRoom.textContent = 'Room: ' + roomId;
+  titleRoomTag.textContent = '  [' + roomId + ']';
+
+  setStatus('Connecting…', 'connecting');
+
+  gun = Gun(GUN_PEERS);
+  roomNode = gun.get(NAMESPACE + '::' + roomId);
+
+  // Connection watchdog — Gun doesn't expose a clean connect event
+  connTimeout = setTimeout(() => {
+    if (statusConn.textContent === 'Connecting…') {
+      setStatus('Relay uncertain — trying…', 'warn');
+    }
+  }, 6000);
+
+  // ── LISTEN for remote events ──────────────────────────────────────────
+  roomNode.on(data => {
+    if (!data || !data.action) return;
+    if (data.sender === myId) return;       // ignore our own echoes
+    if (Date.now() - data.ts > 8000) return; // ignore stale events (>8s old)
+
+    clearTimeout(connTimeout);
+    setStatus('Synced', 'ok');
+
+    // Latency compensation: adjust time by round-trip estimate
+    const latency = (Date.now() - data.ts) / 1000;
+    applyRemoteEvent(data.action, data.time, latency);
+  });
+
+
+}
+
+/* ══ APPLY REMOTE EVENT ════════════════════════════════════════════════════ */
+function applyRemoteEvent(action, remoteTime, latency) {
+  isSyncing = true;
+  flashSync();
+
+  if (action === 'play') {
+    video.currentTime = remoteTime + latency;
+    video.play().catch(() => {});
+  } else if (action === 'pause') {
+    video.currentTime = remoteTime;
+    video.pause();
+  }
+
+  // Release sync lock after a safe window
+  setTimeout(() => { isSyncing = false; }, 600);
+}
+
+/* ══ BROADCAST ═════════════════════════════════════════════════════════════ */
+function broadcast(action) {
+  if (!roomNode || isSyncing) return;
+  roomNode.put({
+    action,
+    time:   video.currentTime,
+    ts:     Date.now(),
+    sender: myId,
+  });
+}
+
+/* ══ VIDEO EVENT LISTENERS ═════════════════════════════════════════════════ */
+video.addEventListener('play',  () => { updatePlayBtn(); broadcast('play');  });
+video.addEventListener('pause', () => { updatePlayBtn(); broadcast('pause'); });
+
+video.addEventListener('timeupdate', () => {
+  if (!seekDragging) updateSeekUI();
+  updateTime();
+});
+
+video.addEventListener('loadedmetadata', () => {
+  updateSeekUI(); updateTime();
+});
+
+/* ══ CONTROLS ══════════════════════════════════════════════════════════════ */
+playPauseBtn.addEventListener('click', () => {
+  if (video.paused) video.play().catch(() => {});
+  else              video.pause();
+});
+
+stopBtn.addEventListener('click', () => {
+  video.pause();
+  video.currentTime = 0;
+  broadcast('pause');
+});
+
+fullscreenBtn.addEventListener('click', () => {
+  if (!document.fullscreenElement) {
+    document.getElementById('video-wrapper').requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen();
+  }
+});
+
+function updatePlayBtn() {
+  playPauseBtn.textContent = video.paused ? '▶' : '⏸';
+}
+
+function updateTime() {
+  const c = video.currentTime, d = video.duration || 0;
+  timeDisplay.textContent = fmtTime(c) + ' / ' + fmtTime(d);
+}
+
+/* ── Seek bar ─────────────────────────────────────────────────────────── */
+function updateSeekUI() {
+  const pct = video.duration ? (video.currentTime / video.duration) * 100 : 0;
+  seekFill.style.width  = pct + '%';
+  seekThumb.style.left  = pct + '%';
+}
+
+function seekToPercent(pct) {
+  if (!video.duration) return;
+  video.currentTime = (pct / 100) * video.duration;
+}
+
+seekTrack.addEventListener('mousedown', e => {
+  seekDragging = true;
+  applySeekFromEvent(e);
+});
+document.addEventListener('mousemove', e => {
+  if (seekDragging) applySeekFromEvent(e);
+  if (volDragging)  applyVolFromEvent(e);
+});
+document.addEventListener('mouseup', e => {
+  if (seekDragging) {
+    seekDragging = false;
+    applySeekFromEvent(e);
+    broadcast('pause'); // sync position
+  }
+  if (volDragging) volDragging = false;
+});
+
+function applySeekFromEvent(e) {
+  const rect = seekTrack.getBoundingClientRect();
+  const pct  = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+  seekFill.style.width = pct + '%';
+  seekThumb.style.left = pct + '%';
+  seekToPercent(pct);
+  updateTime();
+}
+
+seekThumb.addEventListener('mousedown', e => {
+  seekDragging = true; e.stopPropagation();
+});
+
+/* ── Volume bar ───────────────────────────────────────────────────────── */
+volTrack.addEventListener('mousedown', e => {
+  volDragging = true;
+  applyVolFromEvent(e);
+});
+volThumb.addEventListener('mousedown', e => {
+  volDragging = true; e.stopPropagation();
+});
+
+function applyVolFromEvent(e) {
+  const rect = volTrack.getBoundingClientRect();
+  const pct  = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+  video.volume = pct / 100;
+  volFill.style.width  = pct + '%';
+  volThumb.style.left  = pct + '%';
+}
+
+// Init volume thumb at 100%
+volFill.style.width  = '100%';
+volThumb.style.left  = '100%';
+
+/* ══ UI HELPERS ════════════════════════════════════════════════════════════ */
+function fmtTime(s) {
+  if (!isFinite(s)) return '0:00';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60).toString().padStart(2, '0');
+  return h > 0 ? `${h}:${m.toString().padStart(2,'0')}:${sec}` : `${m}:${sec}`;
+}
+
+function setStatus(text, state) {
+  statusConn.textContent = text;
+  const colors = {
+    ok:          'var(--green)',
+    connecting:  'var(--yellow)',
+    warn:        'var(--orange)',
+    solo:        'var(--dark)',
+  };
+  syncDot.style.background = colors[state] || 'var(--dark)';
+}
+
+function flashSync() {
+  syncFlash.classList.add('active');
+  setTimeout(() => syncFlash.classList.remove('active'), 200);
+}
+</script>
+</body>
+</html>
