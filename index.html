@@ -436,27 +436,33 @@
   <div id="splash-hint">Click anywhere to continue...</div>
 </div>
 
-<!-- ══ ROOM DIALOG ══════════════════════════════════════════════════════════ -->
+<!-- ══ PEER DIALOG ══════════════════════════════════════════════════════════ -->
 <div id="room-overlay">
   <div class="win-dialog">
     <div class="win-dialog-title">
       <div class="win-dialog-title-left">
         <img src="logo.png" class="title-icon" alt=""
              onerror="this.style.display='none'">
-        <span>SimulCast — Connect to Room</span>
+        <span>SimulCast — Connect</span>
       </div>
       <button class="titlebar-btn">✕</button>
     </div>
     <div class="win-dialog-body">
-      <label for="room-input">Enter a <b>Room ID</b> to sync with another viewer:</label>
-      <input type="text" id="room-input" class="win-input"
-             placeholder="e.g. movie-night, room42" autocomplete="off" spellcheck="false">
+      <label>Your Peer ID <span style="font-weight:normal;color:var(--dark)">(share this)</span></label>
+      <div style="display:flex;gap:4px;">
+        <input type="text" id="my-id-display" class="win-input"
+               readonly style="flex:1;cursor:text;" value="Generating…">
+        <button class="win-btn" id="copy-id-btn" style="min-width:44px;">Copy</button>
+      </div>
+      <label for="peer-input">Other person's Peer ID</label>
+      <input type="text" id="peer-input" class="win-input"
+             placeholder="Paste their ID here" autocomplete="off" spellcheck="false">
       <div class="dialog-note">
-        💡 Share this same Room ID with the other person.<br>
-        Tip: the URL hash updates automatically — just share the link!
+        💡 One person shares their ID, the other pastes it and clicks Connect.<br>
+        Connection is direct — no servers involved after handshake.
       </div>
       <div class="dialog-buttons">
-        <button class="win-btn" id="join-btn">OK</button>
+        <button class="win-btn" id="join-btn" disabled>Connect</button>
         <button class="win-btn" id="solo-btn">Solo (No Sync)</button>
       </div>
     </div>
@@ -485,7 +491,7 @@
   <div id="menu-bar">
     <span class="menu-item">File</span>
     <span class="menu-item">View</span>
-    <span class="menu-item" id="menu-change-room">Room</span>
+    <span class="menu-item" id="menu-change-room">Connect</span>
     <span class="menu-item">Help</span>
   </div>
 
@@ -534,32 +540,25 @@
 
 </div><!-- /main-window -->
 
-<!-- ══ GUN.JS — Zero-config P2P sync ════════════════════════════════════════
-     Gun.js uses free public relay servers. No backend needed.
-     If relays are unreliable, see README for Firebase fallback.
-═══════════════════════════════════════════════════════════════════════════════ -->
-<script src="./gun.js"></script>
+<!-- PeerJS — WebRTC DataChannel signaling. No account needed. -->
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
 <script>
 'use strict';
 
 /* ══════════════════════════════════════════════════════════════════════════
-   CONFIG — edit these if you want different relay servers
-   Free Gun.js relays (no account needed). Community-hosted, best-effort.
-   For production reliability, self-host: https://github.com/amark/gun
+   PeerJS — true P2P via WebRTC DataChannel.
+   Uses PeerJS free signaling server only for the initial handshake.
+   All play/pause messages travel directly browser-to-browser.
 ══════════════════════════════════════════════════════════════════════════ */
-const GUN_PEERS = [
-  'https://gun-manhattan.herokuapp.com/gun',
-  'https://gun-us.herokuapp.com/gun',
-  'https://peer.wallie.io/gun',
-];
-const NAMESPACE = 'simulcast'; // Change this if you want private rooms
 
 /* ══ DOM REFS ══════════════════════════════════════════════════════════════ */
 const splash         = document.getElementById('splash');
 const splashHint     = document.getElementById('splash-hint');
 const roomOverlay    = document.getElementById('room-overlay');
-const roomInput      = document.getElementById('room-input');
+const myIdDisplay    = document.getElementById('my-id-display');
+const copyIdBtn      = document.getElementById('copy-id-btn');
+const peerInput      = document.getElementById('peer-input');
 const joinBtn        = document.getElementById('join-btn');
 const soloBtn        = document.getElementById('solo-btn');
 const video          = document.getElementById('video');
@@ -582,91 +581,109 @@ const titleRoomTag   = document.getElementById('title-room-tag');
 const menuChangeRoom = document.getElementById('menu-change-room');
 
 /* ══ STATE ═════════════════════════════════════════════════════════════════ */
-const myId = Math.random().toString(36).slice(2, 10); // unique session ID
-let gun, roomNode;
-let isSyncing   = false;  // true while applying a remote event (blocks re-broadcast)
+let peer, conn;
+let isSyncing    = false;
 let seekDragging = false;
 let volDragging  = false;
-let peerCount    = 0;
-let connTimeout;
 
 /* ══ SPLASH ════════════════════════════════════════════════════════════════ */
 splash.addEventListener('click', () => {
-  // First user gesture — safe to play audio now
   tryPlayStartSound();
   splash.style.opacity = '0';
   splash.style.pointerEvents = 'none';
   setTimeout(() => {
     splash.style.display = 'none';
-    showRoomDialog();
+    showDialog();
   }, 500);
 });
 
 function tryPlayStartSound() {
   const snd = new Audio('start.wav');
   snd.volume = 0.7;
-  snd.play().catch(() => {}); // silently skip if missing or blocked
+  snd.play().catch(() => {});
 }
 
-/* ══ ROOM DIALOG ═══════════════════════════════════════════════════════════ */
-function showRoomDialog() {
-  roomOverlay.style.display = 'flex';
-  // Pre-fill from URL hash
-  const hash = location.hash.slice(1);
-  if (hash) roomInput.value = decodeURIComponent(hash);
-  setTimeout(() => roomInput.focus(), 50);
+/* ══ PEER INIT — runs immediately, before dialog is shown ══════════════════ */
+function initPeer() {
+  peer = new Peer(); // PeerJS assigns a random ID
+
+  peer.on('open', id => {
+    myIdDisplay.value = id;
+    joinBtn.disabled = false;
+    titleRoomTag.textContent = '  [' + id + ']';
+    statusRoom.textContent = 'ID: ' + id;
+  });
+
+  // Someone else connected TO us
+  peer.on('connection', incoming => {
+    setupConn(incoming);
+  });
+
+  peer.on('error', err => {
+    setStatus('Error: ' + err.type, 'warn');
+  });
 }
+
+/* ══ DIALOG ════════════════════════════════════════════════════════════════ */
+function showDialog() {
+  roomOverlay.style.display = 'flex';
+  setTimeout(() => peerInput.focus(), 50);
+  initPeer();
+}
+
+copyIdBtn.addEventListener('click', () => {
+  navigator.clipboard.writeText(myIdDisplay.value).catch(() => {});
+  copyIdBtn.textContent = '✓';
+  setTimeout(() => { copyIdBtn.textContent = 'Copy'; }, 1500);
+});
 
 joinBtn.addEventListener('click', () => {
-  const id = roomInput.value.trim().replace(/\s+/g, '-') || 'default-room';
+  const theirId = peerInput.value.trim();
+  if (!theirId) return;
   roomOverlay.style.display = 'none';
-  initRoom(id);
+  setStatus('Connecting…', 'connecting');
+  const outgoing = peer.connect(theirId, { reliable: true });
+  setupConn(outgoing);
 });
+
 soloBtn.addEventListener('click', () => {
   roomOverlay.style.display = 'none';
   setStatus('Solo', 'solo');
-  statusRoom.textContent = 'Room: Solo Mode';
-  titleRoomTag.textContent = '';
+  statusRoom.textContent = 'Solo Mode';
+  if (peer) peer.destroy();
 });
-roomInput.addEventListener('keydown', e => {
+
+peerInput.addEventListener('keydown', e => {
   if (e.key === 'Enter') joinBtn.click();
 });
-menuChangeRoom.addEventListener('click', showRoomDialog);
 
-/* ══ ROOM / GUN INIT ═══════════════════════════════════════════════════════ */
-function initRoom(roomId) {
-  // Update URL hash so both viewers can share the link
-  location.hash = encodeURIComponent(roomId);
-  statusRoom.textContent = 'Room: ' + roomId;
-  titleRoomTag.textContent = '  [' + roomId + ']';
+menuChangeRoom.addEventListener('click', showDialog);
 
-  setStatus('Connecting…', 'connecting');
+/* ══ CONNECTION SETUP ══════════════════════════════════════════════════════ */
+function setupConn(c) {
+  conn = c;
 
-  gun = Gun(GUN_PEERS);
-  roomNode = gun.get(NAMESPACE + '::' + roomId);
+  conn.on('open', () => {
+    roomOverlay.style.display = 'none';
+    setStatus('Connected', 'ok');
+    statusRoom.textContent = 'Peer: ' + conn.peer.slice(0, 8) + '…';
+  });
 
-  // Connection watchdog — Gun doesn't expose a clean connect event
-  connTimeout = setTimeout(() => {
-    if (statusConn.textContent === 'Connecting…') {
-      setStatus('Relay uncertain — trying…', 'warn');
-    }
-  }, 6000);
-
-  // ── LISTEN for remote events ──────────────────────────────────────────
-  roomNode.on(data => {
+  conn.on('data', data => {
     if (!data || !data.action) return;
-    if (data.sender === myId) return;       // ignore our own echoes
-    if (Date.now() - data.ts > 8000) return; // ignore stale events (>8s old)
-
-    clearTimeout(connTimeout);
-    setStatus('Synced', 'ok');
-
-    // Latency compensation: adjust time by round-trip estimate
+    if (Date.now() - data.ts > 8000) return; // ignore stale
     const latency = (Date.now() - data.ts) / 1000;
     applyRemoteEvent(data.action, data.time, latency);
   });
 
+  conn.on('close', () => {
+    setStatus('Disconnected', 'warn');
+    statusRoom.textContent = 'Peer disconnected';
+  });
 
+  conn.on('error', err => {
+    setStatus('Conn error', 'warn');
+  });
 }
 
 /* ══ APPLY REMOTE EVENT ════════════════════════════════════════════════════ */
@@ -682,19 +699,13 @@ function applyRemoteEvent(action, remoteTime, latency) {
     video.pause();
   }
 
-  // Release sync lock after a safe window
   setTimeout(() => { isSyncing = false; }, 600);
 }
 
 /* ══ BROADCAST ═════════════════════════════════════════════════════════════ */
 function broadcast(action) {
-  if (!roomNode || isSyncing) return;
-  roomNode.put({
-    action,
-    time:   video.currentTime,
-    ts:     Date.now(),
-    sender: myId,
-  });
+  if (!conn || !conn.open || isSyncing) return;
+  conn.send({ action, time: video.currentTime, ts: Date.now() });
 }
 
 /* ══ VIDEO EVENT LISTENERS ═════════════════════════════════════════════════ */
