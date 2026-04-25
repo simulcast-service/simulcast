@@ -477,7 +477,7 @@
       <button class="titlebar-btn" title="Minimize">_</button>
       <button class="titlebar-btn" title="Restore">▭</button>
       <button class="titlebar-btn" title="Close"
-              style="font-weight:bold;" onclick="window.close()">✕</button>
+              style="font-weight:bold;">✕</button>
     </div>
   </div>
 
@@ -538,7 +538,7 @@
      Gun.js uses free public relay servers. No backend needed.
      If relays are unreliable, see README for Firebase fallback.
 ═══════════════════════════════════════════════════════════════════════════════ -->
-<script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1240/gun.js"></script>
+<script src="./gun.js"></script>
 
 <script>
 'use strict';
@@ -723,10 +723,11 @@ stopBtn.addEventListener('click', () => {
 });
 
 fullscreenBtn.addEventListener('click', () => {
-  if (!document.fullscreenElement) {
-    document.getElementById('video-wrapper').requestFullscreen().catch(() => {});
+  const el = document.getElementById('video-wrapper');
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el);
   } else {
-    document.exitFullscreen();
+    (document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen).call(document);
   }
 });
 
