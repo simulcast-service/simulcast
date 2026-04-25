@@ -604,8 +604,15 @@ function tryPlayStartSound() {
 }
 
 /* ══ PEER INIT — runs immediately, before dialog is shown ══════════════════ */
+function randomShortId() {
+  const chars = 'abcdefhjkmnpqrstuvwxyz23456789'; // unambiguous chars
+  let id = '';
+  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
+
 function initPeer() {
-  peer = new Peer(); // PeerJS assigns a random ID
+  peer = new Peer(randomShortId());
 
   peer.on('open', id => {
     myIdDisplay.value = id;
