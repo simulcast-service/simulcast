@@ -659,10 +659,20 @@ function showDialog() {
 }
 
 copyIdBtn.addEventListener('click', () => {
-  navigator.clipboard.writeText(myIdDisplay.value).catch(() => {});
+  const val = myIdDisplay.value;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(val).catch(() => fallbackCopy(val));
+  } else {
+    fallbackCopy(val);
+  }
   copyIdBtn.textContent = '✓';
   setTimeout(() => { copyIdBtn.textContent = 'Copy'; }, 1500);
 });
+
+function fallbackCopy(text) {
+  myIdDisplay.select();
+  document.execCommand('copy');
+}
 
 joinBtn.addEventListener('click', () => {
   const theirId = peerInput.value.trim();
@@ -689,14 +699,24 @@ menuChangeRoom.addEventListener('click', showDialog);
 /* ══ CONNECTION SETUP ══════════════════════════════════════════════════════ */
 function setupConn(c) {
   conn = c;
-  console.log('[SimulCast] setupConn called, state:', c.open);
+  console.log('[SimulCast] setupConn called, open:', c.open, 'peer:', c.peer);
 
-  conn.on('open', () => {
-    console.log('[SimulCast] DataChannel open with:', conn.peer);
+  function onOpen() {
+    console.log('[SimulCast] DataChannel OPEN with:', conn.peer);
     roomOverlay.style.display = 'none';
     setStatus('Connected', 'ok');
-    statusRoom.textContent = 'Peer: ' + conn.peer.slice(0, 8) + '…';
-  });
+    statusRoom.textContent = 'Peer: ' + conn.peer;
+  }
+
+  // If already open (can happen on receiving end), fire immediately
+  if (conn.open) {
+    onOpen();
+  } else {
+    conn.on('open', () => {
+      console.log('[SimulCast] open event fired');
+      onOpen();
+    });
+  }
 
   conn.on('data', data => {
     console.log('[SimulCast] Received data:', data);
