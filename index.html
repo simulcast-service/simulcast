@@ -642,7 +642,13 @@ function initMQTT(roomCode) {
     setStatus('Connected', 'ok');
     mqttClient.subscribe(mqttTopic, err => {
       if (err) console.error('[SimulCast] Subscribe error:', err);
-      else console.log('[SimulCast] Subscribed to', mqttTopic);
+      else {
+        console.log('[SimulCast] Subscribed to', mqttTopic);
+        // Announce arrival — existing peers will respond with current state
+        mqttClient.publish(mqttTopic, JSON.stringify({
+          action: 'hello', sender: myId,
+        }));
+      }
     });
   });
 
@@ -652,6 +658,27 @@ function initMQTT(roomCode) {
     if (!data || !data.action) return;
     if (data.sender === myId) return;
     console.log('[SimulCast] Received:', data.action, data);
+
+    // New peer joined — respond with current state so they can catch up
+    if (data.action === 'hello') {
+      mqttClient.publish(mqttTopic, JSON.stringify({
+        action:  'sync',
+        time:    video.currentTime,
+        playing: !video.paused,
+        ts:      Date.now(),
+        sender:  myId,
+      }));
+      return;
+    }
+
+    // We just joined and received the room's current state
+    if (data.action === 'sync') {
+      console.log('[SimulCast] Syncing to room state:', data);
+      video.currentTime = data.time;
+      if (data.playing) video.play().catch(() => {});
+      else              video.pause();
+      return;
+    }
 
     // Peer is pinging us — respond immediately
     if (data.action === 'ping') {
