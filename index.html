@@ -774,22 +774,21 @@ function applyRemoteEvent(data) {
   flashSync();
 
   if (data.action === 'play') {
-    // Receiver: play IMMEDIATELY. Sender already waited for us.
     video.currentTime = data.time;
     video.play().catch(() => {});
 
-  } else if (data.action === 'pause') {
-    video.currentTime = data.time;
+  } else if (data.action === 'pause' || data.action === 'stop') {
+    // Pause first, then seek — avoids race between seek and play state
     video.pause();
+    setTimeout(() => { video.currentTime = data.time; }, 50);
 
   } else if (data.action === 'seek') {
-    // Match sender's position and play state
     video.currentTime = data.time;
     if (data.playing) video.play().catch(() => {});
     else              video.pause();
   }
 
-  setTimeout(() => { isSyncing = false; }, 600);
+  setTimeout(() => { isSyncing = false; }, 700);
 }
 
 /* ══ APPLY REMOTE EVENT ════════════════════════════════════════════════════ */
@@ -807,8 +806,12 @@ function applyRemoteEvent(action, remoteTime, latency) {
 }
 
 /* ══ VIDEO EVENT LISTENERS ═════════════════════════════════════════════════ */
-video.addEventListener('play',  () => { updatePlayBtn(); }); // broadcast handled by coordinatedPlay
-video.addEventListener('pause', () => { updatePlayBtn(); broadcast('pause'); });
+video.addEventListener('play',  () => { updatePlayBtn(); });
+video.addEventListener('pause', () => {
+  updatePlayBtn();
+  // isSyncing is true when pause was triggered by stop btn or remote event — don't re-broadcast
+  broadcast('pause');
+});
 
 video.addEventListener('timeupdate', () => {
   if (!seekDragging) updateSeekUI();
@@ -826,9 +829,11 @@ playPauseBtn.addEventListener('click', () => {
 });
 
 stopBtn.addEventListener('click', () => {
+  isSyncing = true; // prevent the pause event from also broadcasting
   video.pause();
   video.currentTime = 0;
-  broadcast('pause');
+  broadcast('stop');
+  setTimeout(() => { isSyncing = false; }, 600);
 });
 
 fullscreenBtn.addEventListener('click', () => {
