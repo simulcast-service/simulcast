@@ -436,33 +436,27 @@
   <div id="splash-hint">Click anywhere to continue...</div>
 </div>
 
-<!-- ══ PEER DIALOG ══════════════════════════════════════════════════════════ -->
+<!-- ══ ROOM DIALOG ══════════════════════════════════════════════════════════ -->
 <div id="room-overlay">
   <div class="win-dialog">
     <div class="win-dialog-title">
       <div class="win-dialog-title-left">
         <img src="logo.png" class="title-icon" alt=""
              onerror="this.style.display='none'">
-        <span>SimulCast — Connect</span>
+        <span>SimulCast — Join Room</span>
       </div>
       <button class="titlebar-btn">✕</button>
     </div>
     <div class="win-dialog-body">
-      <label>Your Peer ID <span style="font-weight:normal;color:var(--dark)">(share this)</span></label>
-      <div style="display:flex;gap:4px;">
-        <input type="text" id="my-id-display" class="win-input"
-               readonly style="flex:1;cursor:text;" value="Generating…">
-        <button class="win-btn" id="copy-id-btn" style="min-width:44px;">Copy</button>
-      </div>
-      <label for="peer-input">Other person's Peer ID</label>
-      <input type="text" id="peer-input" class="win-input"
-             placeholder="Paste their ID here" autocomplete="off" spellcheck="false">
+      <label for="room-input">Room code <span style="font-weight:normal;color:var(--dark)">(both viewers enter the same code)</span></label>
+      <input type="text" id="room-input" class="win-input"
+             placeholder="e.g. popcorn" autocomplete="off" spellcheck="false" maxlength="20">
       <div class="dialog-note">
-        💡 One person shares their ID, the other pastes it and clicks Connect.<br>
-        Connection is direct — no servers involved after handshake.
+        💡 Pick any word or code and share it with the other person.<br>
+        Both of you enter the same code to sync.
       </div>
       <div class="dialog-buttons">
-        <button class="win-btn" id="join-btn" disabled>Connect</button>
+        <button class="win-btn" id="join-btn">Connect</button>
         <button class="win-btn" id="solo-btn">Solo (No Sync)</button>
       </div>
     </div>
@@ -491,7 +485,7 @@
   <div id="menu-bar">
     <span class="menu-item">File</span>
     <span class="menu-item">View</span>
-    <span class="menu-item" id="menu-change-room">Connect</span>
+    <span class="menu-item" id="menu-change-room">Room</span>
     <span class="menu-item">Help</span>
   </div>
 
@@ -541,47 +535,48 @@
 </div><!-- /main-window -->
 
 <!-- PeerJS — WebRTC DataChannel signaling. No account needed. -->
-<script src="./peerjs.min.js"></script>
+<script src="./mqtt.min.js"></script>
 
 <script>
 'use strict';
 
 /* ══════════════════════════════════════════════════════════════════════════
-   PeerJS — true P2P via WebRTC DataChannel.
-   Uses PeerJS free signaling server only for the initial handshake.
-   All play/pause messages travel directly browser-to-browser.
+   MQTT over WebSockets — HiveMQ free public broker.
+   No account, no API key, no config. Both viewers join the same room code.
+   Topic: simulcast/<roomcode>
 ══════════════════════════════════════════════════════════════════════════ */
 
+const BROKER    = 'wss://broker.hivemq.com:8884/mqtt';
+const NAMESPACE = 'simulcast';
+const myId      = Math.random().toString(36).slice(2, 8);
+
 /* ══ DOM REFS ══════════════════════════════════════════════════════════════ */
-const splash         = document.getElementById('splash');
-const splashHint     = document.getElementById('splash-hint');
-const roomOverlay    = document.getElementById('room-overlay');
-const myIdDisplay    = document.getElementById('my-id-display');
-const copyIdBtn      = document.getElementById('copy-id-btn');
-const peerInput      = document.getElementById('peer-input');
-const joinBtn        = document.getElementById('join-btn');
-const soloBtn        = document.getElementById('solo-btn');
-const video          = document.getElementById('video');
-const playPauseBtn   = document.getElementById('play-pause-btn');
-const stopBtn        = document.getElementById('stop-btn');
-const seekTrack      = document.getElementById('seek-track');
-const seekFill       = document.getElementById('seek-fill');
-const seekThumb      = document.getElementById('seek-thumb');
-const volTrack       = document.getElementById('vol-track');
-const volFill        = document.getElementById('vol-fill');
-const volThumb       = document.getElementById('vol-thumb');
-const timeDisplay    = document.getElementById('time-display');
-const fullscreenBtn  = document.getElementById('fullscreen-btn');
-const statusRoom     = document.getElementById('status-room');
-const statusConn     = document.getElementById('status-conn');
-const statusPeers    = document.getElementById('status-peers');
-const syncDot        = document.getElementById('sync-dot');
-const syncFlash      = document.getElementById('sync-flash');
-const titleRoomTag   = document.getElementById('title-room-tag');
+const splash        = document.getElementById('splash');
+const roomOverlay   = document.getElementById('room-overlay');
+const roomInput     = document.getElementById('room-input');
+const joinBtn       = document.getElementById('join-btn');
+const soloBtn       = document.getElementById('solo-btn');
+const video         = document.getElementById('video');
+const playPauseBtn  = document.getElementById('play-pause-btn');
+const stopBtn       = document.getElementById('stop-btn');
+const seekTrack     = document.getElementById('seek-track');
+const seekFill      = document.getElementById('seek-fill');
+const seekThumb     = document.getElementById('seek-thumb');
+const volTrack      = document.getElementById('vol-track');
+const volFill       = document.getElementById('vol-fill');
+const volThumb      = document.getElementById('vol-thumb');
+const timeDisplay   = document.getElementById('time-display');
+const fullscreenBtn = document.getElementById('fullscreen-btn');
+const statusRoom    = document.getElementById('status-room');
+const statusConn    = document.getElementById('status-conn');
+const syncDot       = document.getElementById('sync-dot');
+const syncFlash     = document.getElementById('sync-flash');
+const titleRoomTag  = document.getElementById('title-room-tag');
 const menuChangeRoom = document.getElementById('menu-change-room');
 
 /* ══ STATE ═════════════════════════════════════════════════════════════════ */
-let peer, conn;
+let mqttClient;
+let mqttTopic;
 let isSyncing    = false;
 let seekDragging = false;
 let volDragging  = false;
@@ -603,161 +598,85 @@ function tryPlayStartSound() {
   snd.play().catch(() => {});
 }
 
-/* ══ PEER INIT — runs immediately, before dialog is shown ══════════════════ */
-function randomShortId() {
-  const chars = 'abcdefhjkmnpqrstuvwxyz23456789'; // unambiguous chars
-  let id = '';
-  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
-  return id;
-}
-
-function initPeer() {
-  const shortId = randomShortId();
-  console.log('[SimulCast] Creating peer with ID:', shortId);
-  peer = new Peer(shortId);
-
-  peer.on('open', id => {
-    console.log('[SimulCast] Peer open, ID:', id);
-    myIdDisplay.value = id;
-    joinBtn.disabled = false;
-    titleRoomTag.textContent = '  [' + id + ']';
-    statusRoom.textContent = 'ID: ' + id;
-  });
-
-  peer.on('connection', incoming => {
-    console.log('[SimulCast] Incoming connection from:', incoming.peer);
-    setupConn(incoming);
-  });
-
-  peer.on('error', err => {
-    console.error('[SimulCast] Peer error:', err.type, err);
-    setStatus('Error: ' + err.type, 'warn');
-  });
-
-  peer.on('disconnected', () => {
-    console.warn('[SimulCast] Peer disconnected from signaling server');
-  });
-
-  peer.on('close', () => {
-    console.warn('[SimulCast] Peer closed');
-  });
-
-  // If open hasn't fired after 5s, signal server is likely unreachable
-  setTimeout(() => {
-    if (myIdDisplay.value === 'Generating…') {
-      console.error('[SimulCast] Timed out — signaling server unreachable');
-      myIdDisplay.value = 'ERROR — see console';
-    }
-  }, 5000);
-}
-
 /* ══ DIALOG ════════════════════════════════════════════════════════════════ */
 function showDialog() {
   roomOverlay.style.display = 'flex';
-  setTimeout(() => peerInput.focus(), 50);
-  initPeer();
-}
-
-copyIdBtn.addEventListener('click', () => {
-  const val = myIdDisplay.value;
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(val).catch(() => fallbackCopy(val));
-  } else {
-    fallbackCopy(val);
-  }
-  copyIdBtn.textContent = '✓';
-  setTimeout(() => { copyIdBtn.textContent = 'Copy'; }, 1500);
-});
-
-function fallbackCopy(text) {
-  myIdDisplay.select();
-  document.execCommand('copy');
+  const hash = location.hash.slice(1);
+  if (hash) roomInput.value = decodeURIComponent(hash);
+  setTimeout(() => roomInput.focus(), 50);
 }
 
 joinBtn.addEventListener('click', () => {
-  const theirId = peerInput.value.trim();
-  if (!theirId) return;
+  const code = roomInput.value.trim().toLowerCase().replace(/\s+/g, '-') || 'default';
   roomOverlay.style.display = 'none';
-  setStatus('Connecting…', 'connecting');
-  const outgoing = peer.connect(theirId, { reliable: true });
-  setupConn(outgoing);
+  location.hash = encodeURIComponent(code);
+  initMQTT(code);
 });
 
 soloBtn.addEventListener('click', () => {
   roomOverlay.style.display = 'none';
   setStatus('Solo', 'solo');
   statusRoom.textContent = 'Solo Mode';
-  if (peer) peer.destroy();
+  titleRoomTag.textContent = '';
 });
 
-peerInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') joinBtn.click();
-});
-
+roomInput.addEventListener('keydown', e => { if (e.key === 'Enter') joinBtn.click(); });
 menuChangeRoom.addEventListener('click', showDialog);
 
-/* ══ CONNECTION SETUP ══════════════════════════════════════════════════════ */
-function setupConn(c) {
-  conn = c;
-  console.log('[SimulCast] setupConn called, open:', c.open, 'peer:', c.peer);
+/* ══ MQTT INIT ═════════════════════════════════════════════════════════════ */
+function initMQTT(roomCode) {
+  mqttTopic = NAMESPACE + '/' + roomCode;
+  statusRoom.textContent  = 'Room: ' + roomCode;
+  titleRoomTag.textContent = '  [' + roomCode + ']';
+  setStatus('Connecting…', 'connecting');
 
-  function onOpen() {
-    console.log('[SimulCast] DataChannel OPEN with:', conn.peer);
-    roomOverlay.style.display = 'none';
+  const clientId = 'simulcast_' + myId;
+  mqttClient = mqtt.connect(BROKER, {
+    clientId,
+    clean: true,
+    reconnectPeriod: 3000,
+  });
+
+  mqttClient.on('connect', () => {
+    console.log('[SimulCast] MQTT connected');
     setStatus('Connected', 'ok');
-    statusRoom.textContent = 'Peer: ' + conn.peer;
-  }
-
-  if (conn.open) {
-    onOpen();
-  } else {
-    conn.on('open', () => {
-      console.log('[SimulCast] open event fired');
-      onOpen();
+    mqttClient.subscribe(mqttTopic, err => {
+      if (err) console.error('[SimulCast] Subscribe error:', err);
+      else console.log('[SimulCast] Subscribed to', mqttTopic);
     });
+  });
 
-    // Poll as fallback — open event sometimes doesn't fire in proxied environments
-    let polls = 0;
-    const pollInterval = setInterval(() => {
-      polls++;
-      console.log('[SimulCast] polling conn.open:', conn.open, '(attempt ' + polls + ')');
-      if (conn.open) {
-        clearInterval(pollInterval);
-        onOpen();
-      }
-      if (polls > 30) { // 6 seconds
-        clearInterval(pollInterval);
-        console.error('[SimulCast] gave up waiting for DataChannel to open');
-        setStatus('Failed to open DataChannel', 'warn');
-      }
-    }, 200);
-  }
-
-  conn.on('data', data => {
-    console.log('[SimulCast] Received data:', data);
+  mqttClient.on('message', (topic, payload) => {
+    let data;
+    try { data = JSON.parse(payload.toString()); } catch { return; }
     if (!data || !data.action) return;
-    if (Date.now() - data.ts > 8000) return;
+    if (data.sender === myId) return;           // ignore our own messages
+    if (Date.now() - data.ts > 8000) return;    // ignore stale
+    console.log('[SimulCast] Received:', data);
     const latency = (Date.now() - data.ts) / 1000;
     applyRemoteEvent(data.action, data.time, latency);
   });
 
-  conn.on('close', () => {
-    console.warn('[SimulCast] Connection closed');
-    setStatus('Disconnected', 'warn');
-    statusRoom.textContent = 'Peer disconnected';
+  mqttClient.on('reconnect', () => setStatus('Reconnecting…', 'connecting'));
+  mqttClient.on('offline',   () => setStatus('Offline', 'warn'));
+  mqttClient.on('error', err => {
+    console.error('[SimulCast] MQTT error:', err);
+    setStatus('Error', 'warn');
   });
+}
 
-  conn.on('error', err => {
-    console.error('[SimulCast] Connection error:', err);
-    setStatus('Conn error', 'warn');
-  });
+/* ══ BROADCAST ═════════════════════════════════════════════════════════════ */
+function broadcast(action) {
+  if (!mqttClient || !mqttClient.connected || isSyncing) return;
+  const msg = JSON.stringify({ action, time: video.currentTime, ts: Date.now(), sender: myId });
+  mqttClient.publish(mqttTopic, msg);
+  console.log('[SimulCast] Broadcast:', action, video.currentTime);
 }
 
 /* ══ APPLY REMOTE EVENT ════════════════════════════════════════════════════ */
 function applyRemoteEvent(action, remoteTime, latency) {
   isSyncing = true;
   flashSync();
-
   if (action === 'play') {
     video.currentTime = remoteTime + latency;
     video.play().catch(() => {});
@@ -765,14 +684,7 @@ function applyRemoteEvent(action, remoteTime, latency) {
     video.currentTime = remoteTime;
     video.pause();
   }
-
   setTimeout(() => { isSyncing = false; }, 600);
-}
-
-/* ══ BROADCAST ═════════════════════════════════════════════════════════════ */
-function broadcast(action) {
-  if (!conn || !conn.open || isSyncing) return;
-  conn.send({ action, time: video.currentTime, ts: Date.now() });
 }
 
 /* ══ VIDEO EVENT LISTENERS ═════════════════════════════════════════════════ */
