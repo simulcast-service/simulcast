@@ -612,23 +612,43 @@ function randomShortId() {
 }
 
 function initPeer() {
-  peer = new Peer(randomShortId());
+  const shortId = randomShortId();
+  console.log('[SimulCast] Creating peer with ID:', shortId);
+  peer = new Peer(shortId);
 
   peer.on('open', id => {
+    console.log('[SimulCast] Peer open, ID:', id);
     myIdDisplay.value = id;
     joinBtn.disabled = false;
     titleRoomTag.textContent = '  [' + id + ']';
     statusRoom.textContent = 'ID: ' + id;
   });
 
-  // Someone else connected TO us
   peer.on('connection', incoming => {
+    console.log('[SimulCast] Incoming connection from:', incoming.peer);
     setupConn(incoming);
   });
 
   peer.on('error', err => {
+    console.error('[SimulCast] Peer error:', err.type, err);
     setStatus('Error: ' + err.type, 'warn');
   });
+
+  peer.on('disconnected', () => {
+    console.warn('[SimulCast] Peer disconnected from signaling server');
+  });
+
+  peer.on('close', () => {
+    console.warn('[SimulCast] Peer closed');
+  });
+
+  // If open hasn't fired after 5s, signal server is likely unreachable
+  setTimeout(() => {
+    if (myIdDisplay.value === 'Generating…') {
+      console.error('[SimulCast] Timed out — signaling server unreachable');
+      myIdDisplay.value = 'ERROR — see console';
+    }
+  }, 5000);
 }
 
 /* ══ DIALOG ════════════════════════════════════════════════════════════════ */
@@ -669,26 +689,31 @@ menuChangeRoom.addEventListener('click', showDialog);
 /* ══ CONNECTION SETUP ══════════════════════════════════════════════════════ */
 function setupConn(c) {
   conn = c;
+  console.log('[SimulCast] setupConn called, state:', c.open);
 
   conn.on('open', () => {
+    console.log('[SimulCast] DataChannel open with:', conn.peer);
     roomOverlay.style.display = 'none';
     setStatus('Connected', 'ok');
     statusRoom.textContent = 'Peer: ' + conn.peer.slice(0, 8) + '…';
   });
 
   conn.on('data', data => {
+    console.log('[SimulCast] Received data:', data);
     if (!data || !data.action) return;
-    if (Date.now() - data.ts > 8000) return; // ignore stale
+    if (Date.now() - data.ts > 8000) return;
     const latency = (Date.now() - data.ts) / 1000;
     applyRemoteEvent(data.action, data.time, latency);
   });
 
   conn.on('close', () => {
+    console.warn('[SimulCast] Connection closed');
     setStatus('Disconnected', 'warn');
     statusRoom.textContent = 'Peer disconnected';
   });
 
   conn.on('error', err => {
+    console.error('[SimulCast] Connection error:', err);
     setStatus('Conn error', 'warn');
   });
 }
