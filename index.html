@@ -708,7 +708,6 @@ function setupConn(c) {
     statusRoom.textContent = 'Peer: ' + conn.peer;
   }
 
-  // If already open (can happen on receiving end), fire immediately
   if (conn.open) {
     onOpen();
   } else {
@@ -716,6 +715,22 @@ function setupConn(c) {
       console.log('[SimulCast] open event fired');
       onOpen();
     });
+
+    // Poll as fallback — open event sometimes doesn't fire in proxied environments
+    let polls = 0;
+    const pollInterval = setInterval(() => {
+      polls++;
+      console.log('[SimulCast] polling conn.open:', conn.open, '(attempt ' + polls + ')');
+      if (conn.open) {
+        clearInterval(pollInterval);
+        onOpen();
+      }
+      if (polls > 30) { // 6 seconds
+        clearInterval(pollInterval);
+        console.error('[SimulCast] gave up waiting for DataChannel to open');
+        setStatus('Failed to open DataChannel', 'warn');
+      }
+    }, 200);
   }
 
   conn.on('data', data => {
