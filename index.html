@@ -651,8 +651,43 @@ function initMQTT(roomCode) {
     try { data = JSON.parse(payload.toString()); } catch { return; }
     if (!data || !data.action) return;
     if (data.sender === myId) return;
-    if (Date.now() - data.ts > 8000) return;
-    console.log('[SimulCast] Received:', data);
+    console.log('[SimulCast] Received:', data.action, data);
+
+    // Peer is pinging us — respond immediately
+    if (data.action === 'ping') {
+      mqttClient.publish(mqttTopic, JSON.stringify({
+        action: 'pong', pingTs: data.pingTs, sender: myId,
+      }));
+      return;
+    }
+
+    // Our ping came back — now we know latency
+    if (data.action === 'pong' && pendingPlay) {
+      const rtt       = Date.now() - pendingPlay.pingTs;
+      lastLatency     = rtt / 2;
+      const { videoTime } = pendingPlay;
+      clearTimeout(pendingPlay.timeout);
+      pendingPlay = null;
+
+      console.log('[SimulCast] RTT:', rtt, 'ms | one-way latency:', lastLatency, 'ms');
+
+      // Send play NOW — peer receives it in ~lastLatency ms and plays immediately
+      mqttClient.publish(mqttTopic, JSON.stringify({
+        action: 'play', time: videoTime, ts: Date.now(), sender: myId,
+      }));
+
+      // We wait that same duration before playing — so we fire together
+      setTimeout(() => {
+        isSyncing = true;
+        video.currentTime = videoTime;
+        video.play().catch(() => {});
+        setTimeout(() => { isSyncing = false; }, 600);
+      }, lastLatency);
+
+      return;
+    }
+
+    if (Date.now() - data.ts > 8000) return; // ignore stale non-ping messages
     applyRemoteEvent(data);
   });
 
@@ -667,25 +702,53 @@ function initMQTT(roomCode) {
 /* ══ BROADCAST ═════════════════════════════════════════════════════════════ */
 function broadcast(action) {
   if (!mqttClient || !mqttClient.connected || isSyncing) return;
-  const msg = JSON.stringify({
-    action,
-    time:    video.currentTime,
-    playing: !video.paused,
-    ts:      Date.now(),
-    sender:  myId,
-  });
-  mqttClient.publish(mqttTopic, msg);
-  console.log('[SimulCast] Broadcast:', action, video.currentTime, 'playing:', !video.paused);
+  mqttClient.publish(mqttTopic, JSON.stringify({
+    action, time: video.currentTime, playing: !video.paused,
+    ts: Date.now(), sender: myId,
+  }));
+}
+
+/* ══ COORDINATED PLAY ══════════════════════════════════════════════════════
+   1. Send ping → peer responds with pong
+   2. RTT/2 = one-way latency = how long until peer receives our play message
+   3. Send play message immediately
+   4. Delay OUR play by that latency — so both fire at the same moment
+   Receiver plays the instant the message arrives. No compensation needed there.
+══════════════════════════════════════════════════════════════════════════ */
+let pendingPlay     = null;
+let lastLatency     = 50; // fallback estimate in ms until first pong
+
+function coordinatedPlay() {
+  if (!mqttClient || !mqttClient.connected) {
+    video.play().catch(() => {});
+    return;
+  }
+
+  const pingTs    = Date.now();
+  const videoTime = video.currentTime;
+  pendingPlay     = { pingTs, videoTime };
+
+  mqttClient.publish(mqttTopic, JSON.stringify({
+    action: 'ping', pingTs, sender: myId,
+  }));
+
+  // Fallback: peer offline or not responding — play after 1s
+  pendingPlay.timeout = setTimeout(() => {
+    if (!pendingPlay) return;
+    console.warn('[SimulCast] No pong — playing without sync');
+    pendingPlay = null;
+    video.play().catch(() => {});
+  }, 1000);
 }
 
 /* ══ APPLY REMOTE EVENT ════════════════════════════════════════════════════ */
 function applyRemoteEvent(data) {
-  const latency = (Date.now() - data.ts) / 1000;
   isSyncing = true;
   flashSync();
 
   if (data.action === 'play') {
-    video.currentTime = data.time + latency;
+    // Receiver: play IMMEDIATELY. Sender already waited for us.
+    video.currentTime = data.time;
     video.play().catch(() => {});
 
   } else if (data.action === 'pause') {
@@ -693,8 +756,8 @@ function applyRemoteEvent(data) {
     video.pause();
 
   } else if (data.action === 'seek') {
-    // Seek to sender's position (+ latency if they're playing)
-    video.currentTime = data.playing ? data.time + latency : data.time;
+    // Match sender's position and play state
+    video.currentTime = data.time;
     if (data.playing) video.play().catch(() => {});
     else              video.pause();
   }
@@ -717,7 +780,7 @@ function applyRemoteEvent(action, remoteTime, latency) {
 }
 
 /* ══ VIDEO EVENT LISTENERS ═════════════════════════════════════════════════ */
-video.addEventListener('play',  () => { updatePlayBtn(); broadcast('play');  });
+video.addEventListener('play',  () => { updatePlayBtn(); }); // broadcast handled by coordinatedPlay
 video.addEventListener('pause', () => { updatePlayBtn(); broadcast('pause'); });
 
 video.addEventListener('timeupdate', () => {
@@ -731,7 +794,7 @@ video.addEventListener('loadedmetadata', () => {
 
 /* ══ CONTROLS ══════════════════════════════════════════════════════════════ */
 playPauseBtn.addEventListener('click', () => {
-  if (video.paused) video.play().catch(() => {});
+  if (video.paused) coordinatedPlay();
   else              video.pause();
 });
 
